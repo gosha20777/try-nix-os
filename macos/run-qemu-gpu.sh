@@ -783,7 +783,7 @@ qemu_args=(
   -drive "if=none,id=omarchy-root,file=${working_disk//,/,,},format=raw,media=disk,cache=writeback"
   -device "virtio-blk-pci,drive=omarchy-root,serial=omarchy-root,bootindex=$disk_bootindex"
   -device 'virtio-gpu-gl-pci,max_outputs=1,xres=1920,yres=1080,romfile='
-  -display "cocoa,gl=on,show-cursor=on,zoom-to-fit=on,full-screen=$full_screen,full-grab=on,immersive=$immersive,swap-opt-cmd=off"
+  -display "cocoa,gl=on,show-cursor=${OMARCHY_SHOW_HOST_CURSOR:-off},zoom-to-fit=on,full-screen=$full_screen,full-grab=on,immersive=$immersive,swap-opt-cmd=off"
   -device 'virtio-keyboard-pci,romfile='
   -device 'virtio-tablet-pci,romfile='
   -device 'virtio-pinch-pci,romfile='
