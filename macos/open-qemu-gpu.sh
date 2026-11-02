@@ -82,7 +82,13 @@ camera_usage=$(/usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$in
 # experimental USB opt-in only reaches the VM when it is forwarded explicitly.
 usb_environment=()
 if [[ -n ${OMARCHY_QEMU_GPU_USB_HOST:-} ]]; then
-  usb_environment=(--env "OMARCHY_QEMU_GPU_USB_HOST=$OMARCHY_QEMU_GPU_USB_HOST")
+  usb_environment+=(--env "OMARCHY_QEMU_GPU_USB_HOST=$OMARCHY_QEMU_GPU_USB_HOST")
+fi
+if [[ -n ${TRY_NIXOS_ISO:-} ]]; then
+  usb_environment+=(--env "TRY_NIXOS_ISO=$TRY_NIXOS_ISO")
+fi
+if [[ -n ${TRY_NIXOS_BOOT_ISO:-} ]]; then
+  usb_environment+=(--env "TRY_NIXOS_BOOT_ISO=$TRY_NIXOS_BOOT_ISO")
 fi
 
 exec /usr/bin/open \
