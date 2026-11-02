@@ -311,13 +311,14 @@ struct QEMUGPULaunchRequest: Equatable {
 
 enum QEMUGPULauncherPath {
     static let appName = "Try Omarchy.app"
+    static let nixosAppName = "Try NixOS.app"
     static let kitName = TryOmarchyKit.bundleName
     static let launcherName = "run-qemu-gpu.sh"
 
     static func resolve(bundleURL: URL) throws -> URL {
         let standardizedBundle = bundleURL.standardizedFileURL
         var bundleInformation = stat()
-        guard [appName, kitName].contains(standardizedBundle.lastPathComponent),
+        guard [appName, nixosAppName, kitName].contains(standardizedBundle.lastPathComponent) || standardizedBundle.pathExtension == "app",
               Darwin.lstat(standardizedBundle.path, &bundleInformation) == 0,
               bundleInformation.st_mode & S_IFMT == S_IFDIR else {
             throw HelperError.io("QEMU launch is available only from the built Omarchy app")
