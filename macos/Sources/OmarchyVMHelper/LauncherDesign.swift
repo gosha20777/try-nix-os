@@ -105,8 +105,15 @@ struct SettingIcon: View {
     }
 }
 
+private struct SettingIconSizeKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 26
+}
+
 extension EnvironmentValues {
-    @Entry var settingIconSize: CGFloat = 26
+    var settingIconSize: CGFloat {
+        get { self[SettingIconSizeKey.self] }
+        set { self[SettingIconSizeKey.self] = newValue }
+    }
 }
 
 /// One settings row: icon, title with an optional badge, secondary detail

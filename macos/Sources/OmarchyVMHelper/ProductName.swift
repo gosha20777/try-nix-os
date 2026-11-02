@@ -8,7 +8,7 @@ enum ProductName {
     /// The Omarchy window's Dock icon. The launcher uses the kit's own icon
     /// when it is absent.
     static let iconEnvironmentKey = "OMARCHY_PRODUCT_ICON"
-    static let defaultName = "Try Omarchy"
+    static let defaultName = "Try NixOS"
 
     static var current: String {
         ProcessInfo.processInfo.environment[environmentKey].flatMap(validated) ?? defaultName

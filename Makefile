@@ -16,6 +16,7 @@ PACKAGE_SIGN_IDENTITY ?= $(RELEASE_SIGN_IDENTITY)
 PACKAGE_NOTARY_PROFILE ?= $(RELEASE_NOTARY_PROFILE)
 FORCE ?= 0
 TEST_JOBS ?= 4
+GUEST ?= 0
 
 SHELL_TESTS := network-helper qemu-networking qemu-port-forwarding run-qemu-gpu \
   qemu-usb-passthrough qemu-monitor-ready run-mode
@@ -69,8 +70,7 @@ doctor:
 	@[[ "$$(uname -s)" == Darwin ]] || { echo 'error: macOS is required' >&2; exit 1; }
 	@[[ "$$(uname -m)" == arm64 ]] || { echo 'error: an Apple Silicon Mac is required' >&2; exit 1; }
 	@major=$$(sw_vers -productVersion | cut -d. -f1); (( major >= 15 )) || { echo 'error: macOS 15 or newer is required' >&2; exit 1; }
-	@for tool in curl docker pkg-config python3 swift xcrun; do command -v "$$tool" >/dev/null || { echo "error: $$tool is required" >&2; exit 1; }; done
-	@docker info >/dev/null 2>&1 || { echo 'error: Docker is installed but not running' >&2; exit 1; }
+	@for tool in curl pkg-config python3 swift xcrun; do command -v "$$tool" >/dev/null || { echo "error: $$tool is required" >&2; exit 1; }; done
 	@printf 'Toolchain ready: %s (%s)\n' "$$(sw_vers -productVersion)" "$$(uname -m)"
 
 test:
@@ -170,7 +170,8 @@ guest-package:
 # Pinned downloads (QEMU and its dependencies' sources, Homebrew bottles) are
 # kept here between builds and checksum-verified on every use.
 runtime:
-	@OMARCHY_FORCE_BUILD="$(FORCE)" OMARCHY_DOWNLOAD_CACHE="$(DOWNLOAD_CACHE)" "$(BUILD_CACHE)" \
+	@[[ -d "$(ROOT)/macos/.build/qemu-gpu-runtime" && "$(FORCE)" != 1 ]] || \
+	  OMARCHY_FORCE_BUILD="$(FORCE)" OMARCHY_DOWNLOAD_CACHE="$(DOWNLOAD_CACHE)" "$(BUILD_CACHE)" \
 	  --root "$(ROOT)" --state-dir "$(BUILD_STATE)" runtime -- \
 	  "$(ROOT)/macos/build-qemu-gpu-runtime.sh"
 
@@ -178,8 +179,9 @@ firmware:
 	@[[ -f "$(ROOT)/macos/.build/firmware/edk2-aarch64-code.fd" && "$(FORCE)" != 1 ]] || \
 	  OMARCHY_DOWNLOAD_CACHE="$(DOWNLOAD_CACHE)" "$(ROOT)/macos/stage-uefi-firmware.sh"
 
-app: guest runtime firmware
+app: $(if $(filter 1,$(GUEST)),guest) runtime firmware
 	@identity=$$(python3 "$(ROOT)/macos/development-sign-identity.py" "$(DEVELOPMENT_SIGN_IDENTITY)") || exit 1; \
+	  mkdir -p "$(GUEST_DIST)"; \
 	  OMARCHY_FORCE_BUILD="$(FORCE)" \
 	  OMARCHY_CODESIGN_IDENTITY="$$identity" \
 	  "$(BUILD_CACHE)" \
@@ -190,7 +192,7 @@ app: guest runtime firmware
 # downloads its factory, from HEAD's release unless FACTORY_DOWNLOAD_URL is set.
 KIT_SIGN_IDENTITY ?= -
 FACTORY_DOWNLOAD_URL ?=
-kit: guest runtime firmware
+kit: runtime firmware
 	@"$(ROOT)/macos/build-app.sh" --configuration production --kit \
 	  --guest-dir "$(GUEST_DIST)" --sign-identity "$(KIT_SIGN_IDENTITY)" \
 	  $(if $(FACTORY_DOWNLOAD_URL),--factory-download-url "$(FACTORY_DOWNLOAD_URL)")
@@ -223,7 +225,7 @@ package-preflight: version-preflight
 	@[[ -n "$(strip $(PACKAGE_NOTARY_PROFILE))" ]] || { echo 'error: PACKAGE_NOTARY_PROFILE must name a notarytool keychain profile' >&2; exit 1; }
 
 package: package-preflight
-	@$(MAKE) --no-print-directory guest runtime firmware
+	@$(MAKE) --no-print-directory runtime firmware
 	@$(ROOT)/macos/build-app.sh \
 	  --configuration production \
 	  --dmg \

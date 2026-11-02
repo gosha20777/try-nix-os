@@ -123,7 +123,7 @@ class BuildCacheTests(unittest.TestCase):
 
     def test_make_orders_components_and_propagates_force(self) -> None:
         dry_run = subprocess.run(
-            ["make", "-n", "build"],
+            ["make", "-n", "build", "GUEST=1"],
             cwd=REPOSITORY,
             check=True,
             stdout=subprocess.PIPE,
@@ -145,7 +145,7 @@ class BuildCacheTests(unittest.TestCase):
         )
 
         forced = subprocess.run(
-            ["make", "-n", "build", "FORCE=1"],
+            ["make", "-n", "build", "FORCE=1", "GUEST=1"],
             cwd=REPOSITORY,
             check=True,
             stdout=subprocess.PIPE,

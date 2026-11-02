@@ -240,7 +240,7 @@ assert_not_contains "$(grep "host settings:" <<<"$output")" "tryomarchy.display_
 assert_not_contains "$(grep "host settings:" <<<"$output")" "ssh_from"
 
 # --- the window, the Dock and the menus follow the product -----------------------------
-assert_contains "$output" " -name guest=Try Omarchy "
+assert_contains "$output" " -name guest=Try NixOS "
 assert_contains "$output" "Product icon: none"
 printf 'icon' >"$resources/TryOmarchy.icns"
 printf 'icon' >"$test_root/Installer.icns"
@@ -322,6 +322,16 @@ assert_contains "$output" "run-qemu-gpu: QEMU exited before it was ready"
 [[ -d $alive ]] || fail "a live run directory was removed"
 work=$(sed -n 's/.*unix:\/tmp\/\(omarchy-qemu-gpu\.[A-Za-z0-9]*\)\/qmp.sock.*/\1/p' "$test_root/qemu-invocations" | head -1)
 [[ -n $work && ! -e /private/tmp/$work ]] || fail "the run directory was not removed"
+product_start=$(head -1 "$test_root/qemu-executables")
+[[ $product_start =~ ^/private/tmp/omarchy-qemu-gpu\.[A-Za-z0-9]{6}/product/Try\ NixOS\.app/Contents/MacOS/Try\ NixOS\ -\>\ (.*)$ &&
+  ${BASH_REMATCH[1]} == "$resources/runtime/bin/Try Omarchy" ]] || fail "Try NixOS did not start under its product app: $product_start"
+[[ $(tail -n +2 "$test_root/qemu-executables") == $'CFBundleExecutable=Try NixOS\nCFBundleName=Try NixOS\nCFBundleDisplayName=Try NixOS\nCFBundlePackageType=APPL' ]] ||
+  fail "the product's app bundle does not name Try NixOS"
+assert_contains "$(<"$test_root/qemu-invocations")" "-name guest=Try NixOS "
+: >"$test_root/qemu-executables"
+: >"$test_root/qemu-invocations"
+launch_env=(OMARCHY_QEMU_GPU_DRY_RUN=0 OMARCHY_QEMU_GPU_DISK_GIB=1 OMARCHY_PRODUCT_NAME='Try Omarchy')
+launch >/dev/null && fail "the fake QEMU launch succeeded"
 [[ $(<"$test_root/qemu-executables") == "$resources/runtime/bin/Try Omarchy -> " ]] ||
   fail "Try Omarchy did not start its QEMU directly"
 # A smaller size never shrinks the disk. Another product starts QEMU from an
@@ -465,6 +475,22 @@ launch_env=(OMARCHY_QEMU_GPU_STATE_ROOT="$test_root/bundled" OMARCHY_QEMU_GPU_FA
 mv "$downloaded" "$resources/guest/omarchy-aarch64-edge.img.zst"
 output=$(launch)
 [[ -f $test_root/bundled/shell/disk.img ]] || fail "the bundled factory did not win over a download"
+
+# --- ISO installation mode without factory.json --------------------------------
+nixos_iso="$test_root/dummy-installer.iso"
+: >"$nixos_iso"
+nixos_state="$test_root/nixos-install"
+empty_guest="$test_root/empty-guest"
+mkdir -p "$empty_guest"
+launch_env=(
+  TRY_NIXOS_ISO="$nixos_iso"
+  OMARCHY_QEMU_GPU_STATE_ROOT="$nixos_state"
+)
+output=$(launch "$empty_guest")
+[[ $(stat -f %z "$nixos_state/shell/disk.img") == 68719476736 ]] || fail "expected 64 GiB sparse disk for NixOS ISO install"
+assert_contains "$output" "drive=nixos-cd,bootindex=0"
+assert_contains "$output" "drive=omarchy-root,serial=omarchy-root,bootindex=1"
+assert_contains "$output" "-drive if=none,id=nixos-cd,file=$nixos_iso,format=raw,media=cdrom,readonly=on"
 
 # --- storage location checks -------------------------------------------------------------
 launch_env=(OMARCHY_QEMU_GPU_TEST_FS_TYPE=exfat)

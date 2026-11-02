@@ -54,7 +54,7 @@ struct NativeAuthenticationBridgeTests {
         )
         let request = try NativeAuthenticationRequest.decode(line)
         #expect(request.operation == .onePasswordUnlock)
-        #expect(request.operation.localizedReason == "Unlock 1Password in the focused Try Omarchy guest")
+        #expect(request.operation.localizedReason == "Unlock 1Password in the focused Try NixOS guest")
         for (field, value) in [
             ("service", "sudo"), ("service", "com.1password.1Password.authorizeCLI"),
             ("requestingUser", "other"), ("tty", "/dev/pts/4"), ("operation", "sudo"),

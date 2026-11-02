@@ -80,8 +80,8 @@ macos_dir=$(cd "$(dirname "$0")" && pwd)
 repo_dir=$(cd "$macos_dir/.." && pwd -P)
 case "$configuration" in
   development)
-    bundle_identifier=dev.tryomarchy.native.development
-    app_display_name='Try Omarchy Dev'
+    bundle_identifier=dev.trynixos.native.development
+    app_display_name='Try NixOS Dev'
     (( build_dmg == 0 )) || {
       echo 'build-app: --dmg requires --configuration production' >&2
       exit 1
@@ -89,8 +89,8 @@ case "$configuration" in
     sign_identity=$(python3 "$macos_dir/development-sign-identity.py" "$sign_identity")
     ;;
   production)
-    bundle_identifier=dev.tryomarchy.native
-    app_display_name='Try Omarchy'
+    bundle_identifier=dev.trynixos.native
+    app_display_name='Try NixOS'
     [[ $sign_identity != auto ]] || {
       echo 'build-app: production requires --sign-identity (use - for an explicit ad-hoc test build)' >&2
       exit 1
@@ -132,17 +132,14 @@ generated_icon="$macos_dir/.build/TryOmarchy.icns"
   echo "build-app: missing staged QEMU runtime; run build-qemu-gpu-runtime.sh first" >&2
   exit 1
 }
-[[ -d $guest_dir && ! -L $guest_dir ]] || {
-  echo "build-app: missing factory guest directory: $guest_dir" >&2
-  exit 1
-}
-guest_dir=$(cd "$guest_dir" && pwd -P)
-# The factory (guest/factory) boots through UEFI firmware; see docs/architecture.md.
-[[ -f $guest_dir/factory.json && ! -L $guest_dir/factory.json ]] || {
-  echo "build-app: $guest_dir has no factory.json; run make guest" >&2
-  exit 1
-}
-guest_packages=${OMARCHY_GUEST_PACKAGES:-"$guest_dir/packages"}
+has_factory=0
+if [[ -d $guest_dir && ! -L $guest_dir ]]; then
+  guest_dir=$(cd "$guest_dir" && pwd -P)
+  if [[ -f $guest_dir/factory.json && ! -L $guest_dir/factory.json ]]; then
+    has_factory=1
+  fi
+fi
+guest_packages=${OMARCHY_GUEST_PACKAGES:-"${guest_dir:-}/packages"}
 [[ -f $firmware_source/edk2-aarch64-code.fd && -f $firmware_source/edk2-licenses.txt ]] || {
   echo "build-app: missing UEFI firmware; run make firmware" >&2
   exit 1
@@ -277,41 +274,43 @@ install -m 0644 "$macos_dir/qemu-port-forwarding.sh" \
   "$contents/Resources/scripts/qemu-port-forwarding.sh"
 install -m 0644 "$macos_dir/qemu-networking.sh" "$contents/Resources/scripts/qemu-networking.sh"
 install -m 0644 "$macos_dir/network-identity.py" "$contents/Resources/scripts/network-identity.py"
-compressed_name=$(/usr/bin/plutil -extract compressed.path raw -o - "$guest_dir/factory.json")
-guest_resources=(factory.json packages.txt SHA256SUMS)
-if [[ -n $factory_download_url ]]; then
-  # The image is over GitHub's 2 GiB asset limit and is only needed for a new
-  # VM, so the app downloads it (FactoryImageDownload.swift).
-  python3 "$repo_dir/scripts/split-factory-image.py" \
-    --guest-dir "$guest_dir" --base-url "$factory_download_url" \
-    --output "$repo_dir/dist/factory" --manifest "$contents/Resources/guest/download.json"
-  chmod 0644 "$contents/Resources/guest/download.json"
-else
-  guest_resources+=("$compressed_name")
+if ((has_factory)); then
+  compressed_name=$(/usr/bin/plutil -extract compressed.path raw -o - "$guest_dir/factory.json")
+  guest_resources=(factory.json packages.txt SHA256SUMS)
+  if [[ -n $factory_download_url ]]; then
+    # The image is over GitHub's 2 GiB asset limit and is only needed for a new
+    # VM, so the app downloads it (FactoryImageDownload.swift).
+    python3 "$repo_dir/scripts/split-factory-image.py" \
+      --guest-dir "$guest_dir" --base-url "$factory_download_url" \
+      --output "$repo_dir/dist/factory" --manifest "$contents/Resources/guest/download.json"
+    chmod 0644 "$contents/Resources/guest/download.json"
+  else
+    guest_resources+=("$compressed_name")
+  fi
+  for guest_resource in "${guest_resources[@]}"; do
+    [[ -f $guest_dir/$guest_resource && ! -L $guest_dir/$guest_resource ]] || {
+      echo "build-app: factory guest resource is missing or unsafe: $guest_resource" >&2
+      exit 1
+    }
+    cp -c "$guest_dir/$guest_resource" "$contents/Resources/guest/$guest_resource"
+    chmod 0644 "$contents/Resources/guest/$guest_resource"
+  done
 fi
-for guest_resource in "${guest_resources[@]}"; do
-  [[ -f $guest_dir/$guest_resource && ! -L $guest_dir/$guest_resource ]] || {
-    echo "build-app: factory guest resource is missing or unsafe: $guest_resource" >&2
-    exit 1
-  }
-  cp -c "$guest_dir/$guest_resource" "$contents/Resources/guest/$guest_resource"
-  chmod 0644 "$contents/Resources/guest/$guest_resource"
-done
 # The try-omarchy package the launcher offers the guest on every boot.
 mkdir -p "$contents/Resources/guest-packages"
-shopt -s nullglob
-packages=("$guest_packages"/try-omarchy-*.pkg.tar.zst)
-shopt -u nullglob
-((${#packages[@]} == 1)) || {
-  echo "build-app: expected exactly one try-omarchy package in $guest_packages" >&2
-  exit 1
-}
-install -m 0644 "${packages[0]}" "$contents/Resources/guest-packages/"
+if [[ -n $guest_packages && -d $guest_packages && ! -L $guest_packages ]]; then
+  shopt -s nullglob
+  packages=("$guest_packages"/try-omarchy-*.pkg.tar.zst)
+  shopt -u nullglob
+  if ((${#packages[@]} > 0)); then
+    install -m 0644 "${packages[0]}" "$contents/Resources/guest-packages/"
+  fi
+fi
 mkdir -p "$contents/Resources/firmware"
 install -m 0644 "$firmware_source/edk2-aarch64-code.fd" "$firmware_source/edk2-licenses.txt" \
   "$contents/Resources/firmware/"
 
-mv "$contents/Resources/runtime/bin/qemu-system-aarch64" "$bundled_qemu"
+[[ ! -f "$contents/Resources/runtime/bin/qemu-system-aarch64" ]] || mv "$contents/Resources/runtime/bin/qemu-system-aarch64" "$bundled_qemu"
 "$dependency_bundler" --verify-only "$contents/Resources/runtime"
 
 sign_options=(--force --sign "$sign_identity")

@@ -8,6 +8,37 @@ struct ShellGuestReport: Codable, Equatable {
     struct Kernel: Codable, Equatable {
         let running: String
         let installed: String?
+
+        var release: String { running }
+
+        enum CodingKeys: String, CodingKey {
+            case running
+            case installed
+            case release
+        }
+
+        init(running: String, installed: String? = nil) {
+            self.running = running
+            self.installed = installed
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if let r = try container.decodeIfPresent(String.self, forKey: .running) {
+                self.running = r
+            } else if let rel = try container.decodeIfPresent(String.self, forKey: .release) {
+                self.running = rel
+            } else {
+                throw DecodingError.keyNotFound(CodingKeys.running, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "running or release key not found"))
+            }
+            self.installed = try container.decodeIfPresent(String.self, forKey: .installed)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(running, forKey: .running)
+            try container.encodeIfPresent(installed, forKey: .installed)
+        }
     }
 
     struct Install: Codable, Equatable {
@@ -19,6 +50,7 @@ struct ShellGuestReport: Codable, Equatable {
     let `protocol`: Int
     let package: String?
     let omarchy: String?
+    let nixos: String?
     let channel: String?
     let kernel: Kernel?
     let install: Install?
@@ -31,7 +63,7 @@ struct ShellGuestReport: Codable, Equatable {
     static func decode(_ data: Data) throws -> Self {
         guard data.count <= maximumLineBytes else { throw HelperError.io("guest status exceeds limit") }
         let value = try JSONDecoder().decode(Self.self, from: data)
-        let texts = [value.package, value.omarchy, value.channel, value.kernel?.running, value.kernel?.installed,
+        let texts = [value.package, value.omarchy, value.nixos, value.channel, value.kernel?.running, value.kernel?.installed,
                      value.install?.requested, value.install?.result, value.install?.message].compactMap { $0 }
         guard value.protocol >= 1, value.protocol <= 1000,
               texts.allSatisfy({ $0.count <= 512 && !$0.contains(where: { $0.isNewline }) }) else {
@@ -154,9 +186,13 @@ struct ShellGuestPresentation: Equatable {
 
     static func make(record: ShellGuestStatusRecord?, bundledPackage: String?) -> Self {
         guard let report = record?.report else {
-            return Self(lines: ["Versions appear after Omarchy starts"], isCurrent: true)
+            return Self(lines: ["Versions appear after NixOS starts"], isCurrent: true)
         }
-        let system = [report.omarchy.map { "Omarchy \($0)" }, report.channel].compactMap { $0 }
+        var osParts = [report.nixos.map { "NixOS \($0)" }, report.omarchy.map { "Omarchy \($0)" }].compactMap { $0 }
+        if osParts.isEmpty, let kernel = report.kernel {
+            osParts.append("Linux \(kernel.release)")
+        }
+        let system = (osParts + [report.channel].compactMap { $0 })
         var integrations = report.package.map { "Integrations \($0)" }
         var current = true
         if let bundledPackage, let package = report.package,

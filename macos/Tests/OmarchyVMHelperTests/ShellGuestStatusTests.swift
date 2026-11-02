@@ -14,6 +14,17 @@ struct ShellGuestStatusTests {
         #expect(report.install == nil)
     }
 
+    @Test("decodes a NixOS guest report")
+    func decodesNixOSReport() throws {
+        let line = #"{"protocol":1,"nixos":"25.05","channel":"unstable","kernel":{"release":"6.14.0"}}"#
+        let report = try ShellGuestReport.decode(Data(line.utf8))
+        #expect(report.protocol == 1)
+        #expect(report.nixos == "25.05")
+        #expect(report.channel == "unstable")
+        #expect(report.kernel?.release == "6.14.0")
+        #expect(report.kernel?.running == "6.14.0")
+    }
+
     @Test("a newer guest protocol with unknown fields still decodes")
     func toleratesNewerGuests() throws {
         let line = #"{"protocol":2,"package":"0.2.0-1","future":{"anything":true}}"#
@@ -87,5 +98,19 @@ struct ShellGuestPresentationTests {
             bundledPackage: "0.1.0-1")
         #expect(!value.isCurrent)
         #expect(value.lines.last == "Integration update failed: offline")
+    }
+
+    @Test("a NixOS guest presents its version and channel")
+    func nixosPresentation() throws {
+        let record = try record(#"{"protocol":1,"nixos":"25.05","channel":"unstable","kernel":{"release":"6.14.0"}}"#)
+        let presentation = ShellGuestPresentation.make(record: record, bundledPackage: nil)
+        #expect(presentation.isCurrent)
+        #expect(presentation.lines == ["NixOS 25.05 · unstable"])
+    }
+
+    @Test("no report yet presents default NixOS message")
+    func noReportPresentation() {
+        let presentation = ShellGuestPresentation.make(record: nil, bundledPackage: nil)
+        #expect(presentation.lines == ["Versions appear after NixOS starts"])
     }
 }

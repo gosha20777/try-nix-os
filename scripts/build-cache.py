@@ -165,15 +165,15 @@ def component_files(root: Path, component: str) -> list[Path]:
             for path in regular_files(macos, {".build", ".swiftpm", "Tests", "patches"})
             if path.relative_to(macos).as_posix() not in excluded_names
         ]
-        paths.extend(
-            [
-                root / "LICENSE",
-                root / ".build/state/guest.json",
-                root / ".build/state/runtime.json",
-                root / "dist/guest/factory.json",
-                root / "dist/guest/SHA256SUMS",
-            ]
-        )
+        paths.append(root / "LICENSE")
+        for optional_input in [
+            root / ".build/state/guest.json",
+            root / ".build/state/runtime.json",
+            root / "dist/guest/factory.json",
+            root / "dist/guest/SHA256SUMS",
+        ]:
+            if optional_input.is_file():
+                paths.append(optional_input)
         paths.extend(regular_files(root / "dist/guest/packages"))
         paths.extend(regular_files(root / "macos/.build/firmware"))
         return sorted(paths)
@@ -447,8 +447,6 @@ def validate_app(root: Path, previous: dict[str, Any] | None) -> dict[str, Any]:
         app / "Contents/MacOS/omarchy-vm-helper",
         app / "Contents/Resources/TryOmarchy.icns",
         app / "Contents/Resources/runtime/bin/Try Omarchy",
-        app / "Contents/Resources/guest/factory.json",
-        app / f"Contents/Resources/guest/{GUEST_FACTORY_DISK}",
         app / "Contents/Resources/firmware/edk2-aarch64-code.fd",
     ]
     if (

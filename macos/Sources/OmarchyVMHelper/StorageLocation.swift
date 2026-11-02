@@ -178,6 +178,7 @@ enum StorageLocationPolicy {
     /// run-qemu-gpu.sh writes. Change one and you must change both;
     /// StorageLocationContractTests pins them together.
     static let rootMarkerContent = "omarchy-qemu-storage-root-v1"
+    static let nixosRootMarkerContent = "try-nixos-storage-root-v1"
 
     /// Kept byte-identical to `validatedConfiguredRoot` in QEMUGPULauncher.swift
     /// and the storage-location check in run-qemu-gpu.sh. Change one and you
@@ -221,7 +222,7 @@ enum StorageLocationPolicy {
         // launch, which is the mismatch this check exists to prevent.
         var body = Substring(contents)
         while body.hasSuffix("\n") { body = body.dropLast() }
-        return body == rootMarkerContent
+        return body == rootMarkerContent || body == nixosRootMarkerContent
     }
 
     /// Whether anything at all occupies the marker path, valid or not. A folder

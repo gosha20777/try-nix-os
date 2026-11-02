@@ -64,8 +64,13 @@ case ${OMARCHY_QEMU_GPU_NESTED_VIRT:-0} in
   0) probe_nested=0 ;;
   *) fail "OMARCHY_QEMU_GPU_NESTED_VIRT must be 0 or 1" ;;
 esac
-[[ -d $guest_input && ! -L $guest_input ]] || fail "guest directory is missing or unsafe: $guest_input"
-guest_dir=$(cd "$guest_input" && pwd -P)
+if [[ -L $guest_input ]]; then
+  fail "guest directory is missing or unsafe: $guest_input"
+fi
+guest_dir=''
+if [[ -d $guest_input ]]; then
+  guest_dir=$(cd "$guest_input" && pwd -P)
+fi
 
 case ${OMARCHY_QEMU_GPU_INSPECT_ONLY:-0} in
   0) codesign --verify --deep --strict "$app_bundle" >/dev/null 2>&1 ||
@@ -78,30 +83,39 @@ esac
 [[ -f $firmware_code && ! -L $firmware_code ]] || fail "the bundled UEFI firmware is missing: $firmware_code"
 
 # --- the factory ---------------------------------------------------------------
-factory="$guest_dir/factory.json"
-[[ -f $factory && ! -L $factory ]] || fail "the guest directory has no factory.json"
-factory_field() {
-  /usr/bin/plutil -extract "$1" raw -o - "$factory" 2>/dev/null
-}
-[[ $(factory_field kind) == upstream-shell-factory && $(factory_field format) == 1 ]] ||
-  fail "unsupported factory format"
-[[ $(factory_field boot) == uefi-limine ]] || fail "the factory does not boot through UEFI"
-compressed_name=$(factory_field compressed.path)
-compressed_sha=$(factory_field compressed.sha256)
-disk_sha=$(factory_field disk.sha256)
-disk_bytes=$(factory_field disk.bytes)
-[[ $compressed_name =~ ^[A-Za-z0-9._-]+\.img\.zst$ && $compressed_sha =~ ^[0-9a-f]{64}$ &&
-  $disk_sha =~ ^[0-9a-f]{64}$ && $disk_bytes =~ ^[1-9][0-9]*$ ]] || fail "the factory manifest is invalid"
-compressed="$guest_dir/$compressed_name"
-# A release app downloads the compressed factory instead of carrying it
-# (FactoryImageDownload.swift) and names the verified copy here. It is only
-# read when a new VM disk needs the factory.
-if [[ ! -e $compressed && ! -L $compressed ]]; then
-  compressed=${OMARCHY_QEMU_GPU_FACTORY_IMAGE:-}
-  [[ -z $compressed || ($compressed == /* && $compressed != *$'\n'*) ]] ||
-    fail "OMARCHY_QEMU_GPU_FACTORY_IMAGE must be an absolute path"
+has_factory=0
+factory=''
+if [[ -n $guest_dir && -f $guest_dir/factory.json && ! -L $guest_dir/factory.json ]]; then
+  factory="$guest_dir/factory.json"
+  has_factory=1
+  factory_field() {
+    /usr/bin/plutil -extract "$1" raw -o - "$factory" 2>/dev/null
+  }
+  [[ $(factory_field kind) == upstream-shell-factory && $(factory_field format) == 1 ]] ||
+    fail "unsupported factory format"
+  [[ $(factory_field boot) == uefi-limine ]] || fail "the factory does not boot through UEFI"
+  compressed_name=$(factory_field compressed.path)
+  compressed_sha=$(factory_field compressed.sha256)
+  disk_sha=$(factory_field disk.sha256)
+  disk_bytes=$(factory_field disk.bytes)
+  [[ $compressed_name =~ ^[A-Za-z0-9._-]+\.img\.zst$ && $compressed_sha =~ ^[0-9a-f]{64}$ &&
+    $disk_sha =~ ^[0-9a-f]{64}$ && $disk_bytes =~ ^[1-9][0-9]*$ ]] || fail "the factory manifest is invalid"
+  compressed="$guest_dir/$compressed_name"
+  # A release app downloads the compressed factory instead of carrying it
+  # (FactoryImageDownload.swift) and names the verified copy here. It is only
+  # read when a new VM disk needs the factory.
+  if [[ ! -e $compressed && ! -L $compressed ]]; then
+    compressed=${OMARCHY_QEMU_GPU_FACTORY_IMAGE:-}
+    [[ -z $compressed || ($compressed == /* && $compressed != *$'\n'*) ]] ||
+      fail "OMARCHY_QEMU_GPU_FACTORY_IMAGE must be an absolute path"
+  fi
+  factory_identity=$disk_sha
+else
+  has_factory=0
+  factory_identity="nixos-custom"
+  disk_bytes=$((64 * 1073741824))
+  compressed=""
 fi
-factory_identity=$disk_sha
 
 if [[ ${OMARCHY_QEMU_GPU_INSPECT_ONLY:-0} == 1 ]]; then
   printf '%s\t%s\n' "$factory_identity" "$disk_bytes"
@@ -142,8 +156,11 @@ require_free_space() { # path bytes
 # token. The app's folder picker applies the same rules
 # (StorageLocationPolicy.hasValidRootMarker, StorageMarkerAgreementTests).
 valid_root_marker() { # path
-  [[ -f $1 && ! -L $1 && $(stat -f %u "$1") == "$(id -u)" && $(stat -f %Lp "$1") == 600 &&
-    $(<"$1") == omarchy-qemu-storage-root-v1 ]]
+  [[ -f $1 && ! -L $1 && $(stat -f %u "$1") == "$(id -u)" && $(stat -f %Lp "$1") == 600 ]] || return 1
+  local marker_body
+  marker_body=$(<"$1")
+  [[ $marker_body == try-nixos-storage-root-v1 ]] ||
+    [[ $(<"$1") == omarchy-qemu-storage-root-v1 ]]
 }
 
 # Resolves and checks the storage folder and takes the persistent VM's lock.
@@ -239,7 +256,7 @@ bridge_enabled() { [[ " $enabled_bridges " == *" $1 "* ]]; }
 # --- product -----------------------------------------------------------------
 # QEMU owns the Omarchy window, so its Dock entry, icon and menus name the app
 # that runs the VM: Try Omarchy, or the app that embeds the kit.
-product_name=${OMARCHY_PRODUCT_NAME:-Try Omarchy}
+product_name=${OMARCHY_PRODUCT_NAME:-Try NixOS}
 [[ ${#product_name} -le 1024 && $product_name != *[[:cntrl:]]* && $product_name =~ ^[^[:space:]](.*[^[:space:]])?$ ]] ||
   fail "OMARCHY_PRODUCT_NAME must be a single-line name without surrounding spaces"
 unset TRYOMARCHY_PRODUCT_ICON
@@ -440,6 +457,28 @@ if [[ $storage_mode == reset ]]; then
   storage_mode=persistent
 fi
 
+# Detect installer ISO
+iso_path=${TRY_NIXOS_ISO:-}
+if [[ -z $iso_path ]]; then
+  if [[ -f $vm_dir/installer.iso ]]; then
+    iso_path="$vm_dir/installer.iso"
+  elif [[ -f $state_root/installer.iso ]]; then
+    iso_path="$state_root/installer.iso"
+  elif [[ -n $guest_dir && -d $guest_dir ]]; then
+    for candidate in "$guest_dir"/*.iso; do
+      if [[ -f $candidate ]]; then
+        iso_path="$candidate"
+        break
+      fi
+    done
+  fi
+fi
+
+if [[ -n $iso_path ]]; then
+  [[ -f $iso_path && $iso_path != *$'\n'* && $iso_path != *$'\r'* && $iso_path != *[[:cntrl:]]* ]] ||
+    fail "installer ISO must be a regular file without control characters: $iso_path"
+fi
+
 # The decompressed factory is kept once per factory identity and cloned (APFS
 # clonefile) for each new VM, so creating or resetting a VM costs no space. A
 # disposable VM first tries to clone the storage folder's copy, and so does a
@@ -510,10 +549,21 @@ decompress_factory_disk() {
   return "$status"
 }
 
+fresh_blank_disk=0
+if [[ ${TRY_NIXOS_BOOT_ISO:-0} == 1 ]]; then
+  fresh_blank_disk=1
+fi
+
 new_disk() { # destination
-  prepare_factory_disk
-  cp -c "$factory_disk" "$1" 2>/dev/null || fail "could not clone the factory disk (the VM storage must be on APFS)"
-  chmod 600 "$1"
+  if ((has_factory)) && [[ -z ${iso_path:-} ]]; then
+    prepare_factory_disk
+    cp -c "$factory_disk" "$1" 2>/dev/null || fail "could not clone the factory disk (the VM storage must be on APFS)"
+    chmod 600 "$1"
+  else
+    /bin/dd if=/dev/null of="$1" bs=1 count=0 seek="$(( ${disk_capacity_gib:-64} * 1073741824 ))" 2>/dev/null || fail "could not create the VM disk"
+    chmod 600 "$1"
+    fresh_blank_disk=1
+  fi
 }
 
 new_vars() { # destination
@@ -701,6 +751,15 @@ host_audio_frequency() { # direction sdl-device-name
 audio_output_frequency=$(host_audio_frequency output "${OMARCHY_SDL_OUTPUT_DEVICE_NAME:-}") || audio_output_frequency=48000
 audio_input_frequency=$(host_audio_frequency input "${OMARCHY_SDL_INPUT_DEVICE_NAME:-}") || audio_input_frequency=48000
 
+disk_bootindex=0
+cd_bootindex=1
+if [[ -n ${iso_path:-} && -f $iso_path ]]; then
+  if ((fresh_blank_disk)) || [[ ${TRY_NIXOS_BOOT_ISO:-0} == 1 ]]; then
+    disk_bootindex=1
+    cd_bootindex=0
+  fi
+fi
+
 qemu_args=(
   -name "guest=${product_name//,/,,}"
   -machine "$qemu_machine"
@@ -722,7 +781,7 @@ qemu_args=(
   -monitor none
   -qmp "unix:$qmp_socket,server=on,wait=off"
   -drive "if=none,id=omarchy-root,file=${working_disk//,/,,},format=raw,media=disk,cache=writeback"
-  -device 'virtio-blk-pci,drive=omarchy-root,serial=omarchy-root,bootindex=0'
+  -device "virtio-blk-pci,drive=omarchy-root,serial=omarchy-root,bootindex=$disk_bootindex"
   -device 'virtio-gpu-gl-pci,max_outputs=1,xres=1920,yres=1080,romfile='
   -display "cocoa,gl=on,show-cursor=on,zoom-to-fit=on,full-screen=$full_screen,full-grab=on,immersive=$immersive,swap-opt-cmd=off"
   -device 'virtio-keyboard-pci,romfile='
@@ -755,6 +814,13 @@ if bridge_enabled settings; then
   qemu_args+=(
     -chardev "socket,id=omarchy-settings-bridge,path=$settings_socket,server=on,wait=off"
     -device 'virtserialport,bus=omarchy-serial.0,nr=6,chardev=omarchy-settings-bridge,name=dev.tryomarchy.settings'
+  )
+fi
+
+if [[ -n ${iso_path:-} && -f $iso_path ]]; then
+  qemu_args+=(
+    -drive "if=none,id=nixos-cd,file=${iso_path//,/,,},format=raw,media=cdrom,readonly=on"
+    -device "virtio-blk-pci,drive=nixos-cd,bootindex=$cd_bootindex"
   )
 fi
 

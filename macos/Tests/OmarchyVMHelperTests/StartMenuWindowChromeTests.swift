@@ -16,7 +16,7 @@ struct StartMenuWindowChromeTests {
 
         StartMenuWindowChrome.apply(to: window)
 
-        #expect(window.title == "Try Omarchy")
+        #expect(window.title == "Try NixOS")
         #expect(window.titleVisibility == .hidden)
         #expect(window.titlebarAppearsTransparent)
         #expect(window.appearance == nil)
