@@ -89,6 +89,8 @@ udp_patch="$native_dir/patches/libslirp-ipv4-udp-translation.patch"
 fence_poll_patch="$native_dir/patches/qemu-darwin-gpu-fence-poll.patch"
 virgl_native_patch="$native_dir/patches/virgl-native-opengl.patch"
 virgl_upload_flush_patch="$native_dir/patches/virgl-ctx0-upload-flush.patch"
+virgl_instance_id_patch="$native_dir/patches/virgl-core-instance-id.patch"
+virgl_skip_draws_patch="$native_dir/patches/virgl-shader-failure-skip-draws.patch"
 prepare_runtime="$native_dir/prepare-qemu-gpu-runtime.sh"
 pinned_bottles="$native_dir/pinned-runtime-bottles.sh"
 
@@ -122,6 +124,8 @@ mapped_sections_patch_sha256=2991378d565faeaf114bb5948bfa9ad05c39b078e4e1f4c2a67
 fence_poll_patch_sha256=1ac407bdb617dfc52d004d0ebd0d07641d920f7d3a9756223c6426a207fb1499
 virgl_native_patch_sha256=692ed73cf88780b4c0e04c56e3cfb21cec761768dea909d755624e07d82fc60c
 virgl_upload_flush_patch_sha256=e5de1617bfeeb2e0ea0fa5cc5c4192f34c896c86efc51e0f68cfa14057afcac0
+virgl_instance_id_patch_sha256=67de90babfec3f4abf2b1747f6637bd74e4cd5a2c2cdf0b44eaaeb0e33a6f0d6
+virgl_skip_draws_patch_sha256=7611495f5afd94b016c9cd7126a457bfdcb13f60df46b5a754cb3d584a4002f1
 strchrnul_patch_sha256=ec1048dd0e8ebe53bf7e8a3bca9bf2f5f4336cd607d4cd077437470e9a32094a
 usb_exact_bus_patch_sha256=5e39159171295c566d014a1ef2744130f80fa02b742c349fa47373b00ae697ec
 minimum_guest_size_patch_sha256=f01e20999bf87821639c93f3489eb093b292c48b107a14ba4fbdad5cbf5840a5
@@ -226,8 +230,8 @@ log() {
 # shellcheck source=macos/pinned-runtime-bottles.sh
 source "$pinned_bottles"
 
-for tool in awk bash chmod curl ditto file grep install mkdir mktemp patch \
-  pkg-config python3 rm sed shasum sw_vers tar uname; do
+for tool in awk bash chmod codesign curl ditto file grep install install_name_tool \
+  mkdir mktemp patch pkg-config python3 rm sed shasum sw_vers tar uname; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool is unavailable: $tool"
 done
 
@@ -464,7 +468,9 @@ tar -xzf "$virgl_archive" -C "$source_parent"
 tar -xzf "$virgl_tap_archive" -C "$source_parent"
 tar -xzf "$pyyaml_archive" -C "$tool_root"
 # Use the pinned pure-Python YAML implementation for generated Gallium tables.
-export PYTHONPATH="$tool_root/$pyyaml_root/lib"
+mkdir -p "$tool_root/python-compat"
+echo "from pip._vendor.tomli import *" > "$tool_root/python-compat/tomli.py"
+export PYTHONPATH="$tool_root/python-compat:$tool_root/$pyyaml_root/lib"
 export PYTHONNOUSERSITE=1
 tar -xzf "$angle_archive" -C "$dependency_root"
 tar -xzf "$epoxy_archive" -C "$dependency_root"
@@ -478,6 +484,7 @@ source_dir="$source_parent/$qemu_root"
 
 install -m 0644 "$setuptools_archive" "$wheel_archive" "$pip_archive" \
   "$packaging_archive" "$source_dir/python/wheels/"
+echo "from pip._vendor.tomli import *" > "$source_dir/python/scripts/tomli.py"
 
 mkdir -p "$source_dir/subprojects/keycodemapdb" "$source_dir/subprojects/dtc"
 tar -xzf "$keycodemap_archive" -C "$source_dir/subprojects/keycodemapdb" --strip-components=1
@@ -601,9 +608,14 @@ done
 # this private build at the verified extracted headers and libraries.
 sed -i '' "s|@@HOMEBREW_CELLAR@@/libepoxy/$epoxy_version|$epoxy_root|g" \
   "$epoxy_root/lib/pkgconfig/epoxy.pc"
+install_name_tool -id "@rpath/libepoxy.0.dylib" "$epoxy_root/lib/libepoxy.0.dylib"
+codesign --force --sign - "$epoxy_root/lib/libepoxy.0.dylib"
 for pc_file in "$angle_root"/lib/pkgconfig/*.pc; do
   sed -i '' "s|^prefix=/opt/homebrew$|prefix=$angle_root|" "$pc_file"
 done
+install_name_tool -id "@rpath/libEGL.dylib" "$angle_root/lib/libEGL.dylib"
+install_name_tool -id "@rpath/libGLESv2.dylib" "$angle_root/lib/libGLESv2.dylib"
+codesign --force --sign - "$angle_root/lib/libEGL.dylib" "$angle_root/lib/libGLESv2.dylib"
 
 for pc_file in "$glib_root"/lib/pkgconfig/*.pc; do
   sed -i '' \
@@ -694,6 +706,10 @@ verify_file_sha "Native OpenGL browser compatibility patch" "$virgl_native_patch
 patch -d "$virgl_source" -p1 -f -i "$virgl_native_patch"
 verify_file_sha "Context 0 upload flush patch" "$virgl_upload_flush_patch" "$virgl_upload_flush_patch_sha256"
 patch -d "$virgl_source" -p1 -f -i "$virgl_upload_flush_patch"
+verify_file_sha "Core GLSL gl_InstanceID patch" "$virgl_instance_id_patch" "$virgl_instance_id_patch_sha256"
+patch -d "$virgl_source" -p1 -f -i "$virgl_instance_id_patch"
+verify_file_sha "Shader failure containment patch" "$virgl_skip_draws_patch" "$virgl_skip_draws_patch_sha256"
+patch -d "$virgl_source" -p1 -f -i "$virgl_skip_draws_patch"
 virgl_build="$virgl_source/build"
 meson="$tool_root/$meson_root/meson.py"
 # Optimize the graphics command path while retaining assertions and diagnostics.
@@ -741,7 +757,8 @@ env MACOSX_DEPLOYMENT_TARGET="$macos_deployment_target" \
 "$ninja" ${ninja_jobs[@]+"${ninja_jobs[@]}"} -C "$slirp_build"
 # The explicit build above completed the test binaries using our private Ninja.
 env DYLD_LIBRARY_PATH="$slirp_build:$private_libraries" \
-  python3 "$meson" test -C "$slirp_build" --no-rebuild --print-errorlogs
+  python3 -c "import os, sys, runpy; path = sys.argv[1]; dyld = sys.argv[2]; sys.argv = [path] + sys.argv[3:]; os.environ['DYLD_LIBRARY_PATH'] = dyld; runpy.run_path(path, run_name='__main__')" \
+    "$meson" "$slirp_build:$private_libraries" test -C "$slirp_build" --no-rebuild --print-errorlogs
 python3 "$meson" install -C "$slirp_build" --no-rebuild
 
 build_dir="$source_dir/build"
